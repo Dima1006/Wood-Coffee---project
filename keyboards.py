@@ -25,6 +25,14 @@ def get_cart_kb():
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
+def get_place_kb():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="🥡 Із собою")
+    builder.button(text="☕ У закладі")
+    builder.button(text="⬅️ Назад")
+    builder.adjust(2, 1)
+    return builder.as_markup(resize_keyboard=True)
+
 
 def get_vertical_kb(items):
     builder = ReplyKeyboardBuilder()

@@ -4,6 +4,7 @@ class OrderState(StatesGroup):
     registering = State()          # Для первого ввода ФИО
     choosing_category = State()
     choosing_sub_category = State()
+    choosing_place = State()
     choosing_item = State()
     choosing_size = State()
     choosing_quantity = State()

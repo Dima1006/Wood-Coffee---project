@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from config import BOT_TOKEN, STAFF_IDS
 from menu import COFFEE, TEA, MILK_DRINK, DESSERTS
 from states import OrderState, BaristaStates
-from keyboards import yes_no_kb, get_main_menu, get_vertical_kb, get_cart_kb
+from keyboards import yes_no_kb, get_main_menu, get_vertical_kb, get_cart_kb, get_place_kb
 from database import init_db, add_user, get_user_name, save_order, get_user_history, get_order_by_id
 
 logging.basicConfig(level=logging.INFO)
@@ -50,10 +50,8 @@ def parse_order_details_to_cart(details: str):
     lines = details.strip().split('\n')
 
     for line in lines:
-        # Улучшенный регулярный запрос для парсинга позиций
         match = re.search(r"-\s+(.+?)\s+\((.+?)\)\s+x(\d+)", line.strip())
         if not match:
-            # Для десертов, где нет размера в скобках
             match = re.search(r"-\s+(.+?)\s+x(\d+)", line.strip())
             if not match: continue
             name = match.group(1).strip()
@@ -178,13 +176,15 @@ async def back_handler(message: types.Message, state: FSMContext):
     elif current_state == OrderState.choosing_time:
         await show_cart(message, state)
 
+    elif current_state == OrderState.choosing_place:
+        await pay_start(message, state)
+
     else:
-        # Для корзины и других случаев: просто в главное меню без приветствия
         await state.set_state(OrderState.choosing_category)
         await message.answer("Повертаємось до вибору страв. Кошик збережено.", reply_markup=get_main_menu())
 
 
-# --- ІСТОРІЯ ТА ПОВТОР (ВИПРАВЛЕНО СУМУ) ---
+# --- ІСТОРІЯ ТА ПОВТОР ---
 
 @dp.message(F.text == "📜 Мої замовлення", StateFilter("*"))
 async def show_history(message: types.Message):
@@ -201,7 +201,6 @@ async def show_history(message: types.Message):
         total_db = last[3]
         date_raw = last[4]
 
-        # Если сумма 0, пересчитываем её на лету
         if not total_db or total_db == 0:
             temp_cart = parse_order_details_to_cart(details)
             total = sum(item['price'] for item in temp_cart)
@@ -380,7 +379,7 @@ async def delete_item(callback: types.CallbackQuery, state: FSMContext):
     await show_cart(callback.message, state)
 
 
-# --- ОФОРМЛЕННЯ ТА ЧАС ---
+# --- ОФОРМЛЕННЯ (ЧАС ТА МІСЦЕ) ---
 
 @dp.message(F.text.in_(["💳 Оплатити", "💳 Оформити замовлення"]), StateFilter("*"))
 async def pay_start(message: types.Message, state: FSMContext):
@@ -392,28 +391,57 @@ async def pay_start(message: types.Message, state: FSMContext):
 
 
 @dp.message(OrderState.choosing_time)
-async def finish_order(message: types.Message, state: FSMContext):
+async def pick_time(message: types.Message, state: FSMContext):
     match = re.search(r'\d+', message.text)
     if not match:
         await message.answer("🔢 Введіть число хвилин!")
         return
     mins = int(match.group())
-    arrival_time = (datetime.now(KYIV_TZ) + timedelta(minutes=mins)).strftime("%H:%M")
+    await state.update_data(arrival_mins=mins)
+
+    # ПЕРЕХІД ДО ВИБОРУ МІСЦЯ
+    await message.answer("Де бажаєте випити каву?", reply_markup=get_place_kb())
+    await state.set_state(OrderState.choosing_place)
+
+
+@dp.message(OrderState.choosing_place)
+async def finish_order(message: types.Message, state: FSMContext):
+    if message.text not in ["🥡 Із собою", "☕ У закладі"]:
+        await message.answer("Будь ласка, оберіть варіант на кнопках!")
+        return
+
     data = await state.get_data()
+    mins = data.get("arrival_mins", 10)
+    arrival_time = (datetime.now(KYIV_TZ) + timedelta(minutes=mins)).strftime("%H:%M")
     cart = data.get("cart", [])
     order_id = get_next_order_number()
+
     items_text = "\n".join([f"- {i['name']} ({i['size']}) x{i['qty']}" for i in cart])
     total_sum = sum(i['price'] for i in cart)
+
+    # Зберігаємо замовлення в базу
     save_order(message.from_user.id, order_id, items_text, total_sum)
-    admin_msg = f"🔔 **ЗАМОВЛЕННЯ №{order_id}**\n👤 {get_user_name(message.from_user.id)}\n⏰ Орієнтовно о {arrival_time}\n\n{items_text}\n💰 {total_sum}₴"
+
+    # Формуємо повідомлення для бариста (додаємо МІСЦЕ)
+    admin_msg = (
+        f"🔔 **ЗАМОВЛЕННЯ №{order_id}**\n"
+        f"👤 {get_user_name(message.from_user.id)}\n"
+        f"📍 **МІСЦЕ: {message.text}**\n"
+        f"⏰ Орієнтовно о {arrival_time}\n\n"
+        f"{items_text}\n"
+        f"💰 {total_sum}₴"
+    )
+
     admin_kb = InlineKeyboardBuilder()
     admin_kb.button(text="✅ Прийняти", callback_data=f"adm_accept_{message.from_user.id}_{order_id}_{mins}")
     admin_kb.button(text="❌ Відхилити", callback_data=f"adm_decline_{message.from_user.id}_{order_id}")
+
     for adm in STAFF_IDS:
         try:
             await bot.send_message(adm, admin_msg, reply_markup=admin_kb.as_markup())
         except:
             continue
+
     await message.answer(f"⏳ Замовлення №{order_id} надіслано! Буде готово о ~{arrival_time}",
                          reply_markup=get_main_menu())
     await state.clear()
