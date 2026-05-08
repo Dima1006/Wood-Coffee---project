@@ -11,9 +11,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
-# Імпорти ваших модулів
+# Локальні модулі
 from config import BOT_TOKEN, STAFF_IDS
-from menu import COFFEE, TEA, MILK_DRINK, DESSERTS
+from menu import CLASSIC_PIZZA, FIRM_PIZZA, DRINKS, DESSERTS
 from states import OrderState, BaristaStates
 from keyboards import yes_no_kb, get_main_menu, get_vertical_kb, get_cart_kb, get_place_kb
 from database import init_db, add_user, get_user_name, save_order, get_user_history, get_order_by_id
@@ -65,12 +65,12 @@ def parse_order_details_to_cart(details: str):
         price_per_one = 0
         if name in DESSERTS:
             price_per_one = DESSERTS[name]
-        elif name in COFFEE:
-            price_per_one = COFFEE[name].get(size, 0)
-        elif name in TEA:
-            price_per_one = TEA[name].get(size, 0)
-        elif name in MILK_DRINK:
-            price_per_one = MILK_DRINK[name].get(size, 0)
+        elif name in CLASSIC_PIZZA:
+            price_per_one = CLASSIC_PIZZA[name].get(size, 0)
+        elif name in FIRM_PIZZA:
+            price_per_one = FIRM_PIZZA[name].get(size, 0)
+        elif name in DRINKS:
+            price_per_one = DRINKS[name].get(size, 0)
 
         new_cart.append({
             "name": name,
@@ -113,7 +113,7 @@ def is_bad_name(text: str) -> bool:
 @dp.message(F.text == "🏠 На головну", StateFilter("*"))
 async def start(message: types.Message, state: FSMContext):
     if not is_cafe_open():
-        await message.answer("🌙 Вибачте, кав'ярня зараз зачинена.")
+        await message.answer("🌙 Вибачте, піццерія зараз зачинена.")
         return
     user_name = get_user_name(message.from_user.id)
     if not user_name:
@@ -124,7 +124,7 @@ async def start(message: types.Message, state: FSMContext):
         cart = data.get("cart", [])
         await state.clear()
         await state.update_data(cart=cart)
-        await message.answer(f"☕ Вітаємо, {user_name}!", reply_markup=get_main_menu())
+        await message.answer(f"🍕 Вітаємо, {user_name}!", reply_markup=get_main_menu())
         await state.set_state(OrderState.choosing_category)
 
 
@@ -165,7 +165,12 @@ async def back_handler(message: types.Message, state: FSMContext):
 
     elif current_state in [OrderState.choosing_size, OrderState.choosing_quantity]:
         cat = data.get("current_cat")
-        menu_items = {"COFFEE": COFFEE, "TEA": TEA, "MILK_DRINK": MILK_DRINK, "DESSERTS": DESSERTS}
+        menu_items = {
+            "CLASSIC_PIZZA": CLASSIC_PIZZA,
+            "FIRM_PIZZA": FIRM_PIZZA,
+            "DRINKS": DRINKS,
+            "DESSERTS": DESSERTS,
+        }
         if cat in menu_items:
             await message.answer("Оберіть товар:", reply_markup=get_vertical_kb(list(menu_items[cat].keys())))
             await state.set_state(OrderState.choosing_item)
@@ -274,9 +279,12 @@ async def confirm_repeat_no(callback: types.CallbackQuery, state: FSMContext):
 
 # --- КАТЕГОРІЇ ТА ВИБІР ТОВАРУ ---
 
-@dp.message(OrderState.choosing_category, F.text == "🥤 Напій")
+@dp.message(OrderState.choosing_category, F.text == "🍕 Меню")
 async def drink_cats(message: types.Message, state: FSMContext):
-    await message.answer("Який напій?", reply_markup=get_vertical_kb(["Кава", "Чай", "Молочні напої"]))
+    await message.answer(
+        "Оберіть розділ:",
+        reply_markup=get_vertical_kb(["Класична піцца", "Фірмова піцца", "Напої"]),
+    )
     await state.set_state(OrderState.choosing_sub_category)
 
 
@@ -289,7 +297,11 @@ async def dessert_list(message: types.Message, state: FSMContext):
 
 @dp.message(OrderState.choosing_sub_category)
 async def sub_cats(message: types.Message, state: FSMContext):
-    menu_map = {"Кава": (COFFEE, "COFFEE"), "Чай": (TEA, "TEA"), "Молочні напої": (MILK_DRINK, "MILK_DRINK")}
+    menu_map = {
+        "Класична піцца": (CLASSIC_PIZZA, "CLASSIC_PIZZA"),
+        "Фірмова піцца": (FIRM_PIZZA, "FIRM_PIZZA"),
+        "Напої": (DRINKS, "DRINKS"),
+    }
     if message.text in menu_map:
         menu, cat_id = menu_map[message.text]
         await state.update_data(current_cat=cat_id)
@@ -301,7 +313,12 @@ async def sub_cats(message: types.Message, state: FSMContext):
 async def pick_item(message: types.Message, state: FSMContext):
     data = await state.get_data()
     cat = data.get('current_cat')
-    menus = {"COFFEE": COFFEE, "TEA": TEA, "MILK_DRINK": MILK_DRINK, "DESSERTS": DESSERTS}
+    menus = {
+        "CLASSIC_PIZZA": CLASSIC_PIZZA,
+        "FIRM_PIZZA": FIRM_PIZZA,
+        "DRINKS": DRINKS,
+        "DESSERTS": DESSERTS,
+    }
     if not cat or message.text not in menus[cat]: return
     await state.update_data(selected_item=message.text)
     if cat == "DESSERTS":
@@ -318,7 +335,9 @@ async def pick_item(message: types.Message, state: FSMContext):
 async def pick_size(message: types.Message, state: FSMContext):
     data = await state.get_data()
     cat, item = data['current_cat'], data['selected_item']
-    price = {"COFFEE": COFFEE, "TEA": TEA, "MILK_DRINK": MILK_DRINK}[cat][item][message.text]
+    price = {"CLASSIC_PIZZA": CLASSIC_PIZZA, "FIRM_PIZZA": FIRM_PIZZA, "DRINKS": DRINKS}[cat][item][
+        message.text
+    ]
     await state.update_data(selected_size=message.text, selected_price=price)
     await message.answer("Кількість?", reply_markup=get_vertical_kb(["1", "2", "3", "4", "5"]))
     await state.set_state(OrderState.choosing_quantity)
@@ -400,13 +419,13 @@ async def pick_time(message: types.Message, state: FSMContext):
     await state.update_data(arrival_mins=mins)
 
     # ПЕРЕХІД ДО ВИБОРУ МІСЦЯ
-    await message.answer("Де бажаєте випити каву?", reply_markup=get_place_kb())
+    await message.answer("Заказ із собою, чи в закладі?", reply_markup=get_place_kb())
     await state.set_state(OrderState.choosing_place)
 
 
 @dp.message(OrderState.choosing_place)
 async def finish_order(message: types.Message, state: FSMContext):
-    if message.text not in ["🥡 Із собою", "☕ У закладі"]:
+    if message.text not in ["🥡 Із собою", "🍕 У закладі"]:
         await message.answer("Будь ласка, оберіть варіант на кнопках!")
         return
 

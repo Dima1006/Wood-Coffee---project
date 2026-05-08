@@ -8,7 +8,7 @@ def yes_no_kb():
 
 def get_main_menu():
     builder = ReplyKeyboardBuilder()
-    builder.button(text="🥤 Напій")
+    builder.button(text="🍕 Меню")
     builder.button(text="🍰 Десерт")
     builder.button(text="📜 Мої замовлення")
     builder.button(text="🛒 Кошик")
@@ -28,7 +28,7 @@ def get_cart_kb():
 def get_place_kb():
     builder = ReplyKeyboardBuilder()
     builder.button(text="🥡 Із собою")
-    builder.button(text="☕ У закладі")
+    builder.button(text="🍕 У закладі")
     builder.button(text="⬅️ Назад")
     builder.adjust(2, 1)
     return builder.as_markup(resize_keyboard=True)

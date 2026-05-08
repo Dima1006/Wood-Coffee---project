@@ -2,7 +2,7 @@ import sqlite3
 import pytz
 from datetime import datetime, timedelta
 
-# Настройка часового пояса
+# Часовий пояс для всіх дат
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
 
@@ -57,7 +57,7 @@ def get_user_history(user_id):
     start_of_week = (now_kyiv - timedelta(days=now_kyiv.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     start_date_str = start_of_week.strftime('%Y-%m-%d %H:%M:%S')
 
-    # ПОРЯДОК СТОВПЦІВ: id(0), number(1), details(2), total(3), date(4)
+    # Порядок стовпців: id(0), number(1), details(2), total(3), date(4)
     cursor.execute('''
         SELECT id, order_number, details, total_sum, date
         FROM orders 
@@ -73,7 +73,7 @@ def get_user_history(user_id):
 def get_order_by_id(order_id):
     conn = sqlite3.connect('coffee_shop.db')
     cursor = conn.cursor()
-    # Додаємо total_sum у вибірку
+    # Повертаємо і текст, і підсумок замовлення
     cursor.execute('SELECT details, total_sum FROM orders WHERE id = ?', (order_id,))
     res = cursor.fetchone()
     conn.close()
@@ -81,7 +81,7 @@ def get_order_by_id(order_id):
 
 
 def save_order(user_id, order_num, details, total):
-    # Явно берем текущее время в Киеве перед сохранением
+    # Фіксуємо час Києва перед збереженням
     kyiv_now = datetime.now(KYIV_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
     conn = sqlite3.connect('coffee_shop.db')
