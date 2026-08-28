@@ -7,11 +7,22 @@ from aiogram.utils import executor
 from config import BOT_TOKEN, STAFF_IDS
 from menu import COFFEE, TEA, MILK_DRINK, DESSERTS
 from states import OrderState
-from keyboards import yes_no_kb
+from keyboards import order_status_kb, yes_no_kb
 from cart import add_to_cart, clear_cart, get_cart, cart_total
+from db import PAYMENT_ON_ARRIVAL, PAYMENT_ONLINE, storage
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
+
+
+async def reject_blocked_customer(message: types.Message) -> bool:
+    if not storage.is_customer_blocked(message.from_user.id):
+        return False
+
+    await message.answer(
+        "🚫 Your account is blocked after two no-show orders. Please contact the staff."
+    )
+    return True
 
 
 # ---------- Main menu ----------
@@ -27,6 +38,8 @@ def get_main_menu():
 async def start(message: types.Message, state: FSMContext):
     await state.finish()
     clear_cart(message.from_user.id)
+    if await reject_blocked_customer(message):
+        return
     await message.answer(
         "☕ Welcome to Wood Coffee!\nChoose a category 👇",
         reply_markup=get_main_menu()
@@ -165,7 +178,42 @@ async def show_cart(message: types.Message):
 # ---------- Payment ----------
 @dp.message_handler(text="💳 Pay", state="*")
 async def pay(message: types.Message, state: FSMContext):
-    await message.answer("✅ Payment successful (test)")
+    if await reject_blocked_customer(message):
+        return
+
+    if not get_cart(message.from_user.id):
+        await message.answer("Your cart is empty 🕸")
+        return
+
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("💳 Online Payment (test)", "💵 Pay on Arrival")
+    kb.add("⬅️ Back")
+    await message.answer("Choose a payment method:", reply_markup=kb)
+    await OrderState.choosing_payment.set()
+
+
+@dp.message_handler(state=OrderState.choosing_payment)
+async def choose_payment_method(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Back":
+        await message.answer("Main menu", reply_markup=get_main_menu())
+        await OrderState.choosing_category.set()
+        return
+
+    payment_methods = {
+        "💳 Online Payment (test)": PAYMENT_ONLINE,
+        "💵 Pay on Arrival": PAYMENT_ON_ARRIVAL,
+    }
+    payment_method = payment_methods.get(message.text)
+    if not payment_method:
+        await message.answer("Choose a payment method using the buttons.")
+        return
+
+    await state.update_data(payment_method=payment_method)
+    if payment_method == PAYMENT_ONLINE:
+        await message.answer("✅ Online payment successful (test)")
+    else:
+        await message.answer("💵 You will pay when you arrive.")
+
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("5 min", "10 min", "15 min")
     await OrderState.choosing_time.set()
@@ -183,16 +231,108 @@ async def time_handler(message: types.Message, state: FSMContext):
 
     arrival = (datetime.now() + timedelta(minutes=minutes)).strftime("%H:%M")
     cart = get_cart(message.from_user.id)
+    data = await state.get_data()
+    payment_method = data.get("payment_method")
+
+    if not payment_method or not cart:
+        await state.finish()
+        await message.answer("Your checkout session expired. Please create the order again.", reply_markup=get_main_menu())
+        return
+
+    if await reject_blocked_customer(message):
+        await state.finish()
+        clear_cart(message.from_user.id)
+        return
 
     order = "\n".join([f"- {i['name']} ({i['size']})" for i in cart])
-    msg = f"🔔 NEW ORDER\n⏰ {arrival}\n\n{order}"
+    total = cart_total(message.from_user.id)
+    order_id = storage.create_order(
+        user_id=message.from_user.id,
+        items=cart,
+        total=total,
+        payment_method=payment_method,
+        arrival_time=arrival,
+    )
+    payment_label = "Online Payment (test)" if payment_method == PAYMENT_ONLINE else "Pay on Arrival"
+    msg = (
+        f"🔔 NEW ORDER #{order_id}\n"
+        f"👤 Customer ID: {message.from_user.id}\n"
+        f"💳 Payment: {payment_label}\n"
+        f"⏰ Arrival: {arrival}\n\n{order}\n\n💰 Total: {total}₴"
+    )
 
     for staff in STAFF_IDS:
-        await bot.send_message(staff, msg)
+        reply_markup = order_status_kb(order_id) if payment_method == PAYMENT_ON_ARRIVAL else None
+        await bot.send_message(staff, msg, reply_markup=reply_markup)
 
     clear_cart(message.from_user.id)
     await state.finish()
     await message.answer(f"✅ We will be waiting for you at {arrival}", reply_markup=get_main_menu())
+
+
+@dp.callback_query_handler(lambda call: call.data and call.data.startswith("order:"), state="*")
+async def process_order_status(call: types.CallbackQuery):
+    if call.from_user.id not in STAFF_IDS:
+        await call.answer("Only staff can process orders.", show_alert=True)
+        return
+
+    try:
+        _, order_id_text, action = call.data.split(":")
+        order_id = int(order_id_text)
+    except (ValueError, AttributeError):
+        await call.answer("Invalid order action.", show_alert=True)
+        return
+
+    if action == "arrived":
+        if not storage.mark_arrived(order_id):
+            await call.answer("This order has already been processed.", show_alert=True)
+            return
+        await call.message.edit_reply_markup()
+        await call.answer("Order marked as arrived.")
+        return
+
+    if action == "no_show":
+        result = storage.mark_no_show(order_id)
+        if result is None:
+            await call.answer("This order has already been processed.", show_alert=True)
+            return
+
+        warning_count, is_blocked = result
+        customer_id = storage.get_order_customer_id(order_id)
+        if customer_id is not None:
+            if is_blocked:
+                customer_message = (
+                    "🚫 Your account has been blocked after two no-show orders. "
+                    "Please contact the staff."
+                )
+            else:
+                customer_message = (
+                    f"🟨 Yellow card: this is warning {warning_count}/2 for a no-show order. "
+                    "A second warning will block new orders."
+                )
+            await bot.send_message(customer_id, customer_message)
+
+        await call.message.edit_reply_markup()
+        await call.answer(f"No-show recorded. Warning {warning_count}/2.")
+        return
+
+    await call.answer("Invalid order action.", show_alert=True)
+
+
+@dp.message_handler(commands=["unblock"], state="*")
+async def unblock_customer(message: types.Message):
+    if message.from_user.id not in STAFF_IDS:
+        await message.answer("Only staff can unblock customers.")
+        return
+
+    try:
+        user_id = int(message.get_args())
+    except ValueError:
+        await message.answer("Usage: /unblock <telegram_user_id>")
+        return
+
+    storage.unblock_customer(user_id)
+    await message.answer(f"Customer {user_id} has been unblocked and their warnings were reset.")
 
 
 # ---------- Back ----------

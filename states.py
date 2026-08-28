@@ -5,4 +5,5 @@ class OrderState(StatesGroup):
     choosing_item = State()
     choosing_size = State()
     confirm_add = State()
+    choosing_payment = State()
     choosing_time = State()
