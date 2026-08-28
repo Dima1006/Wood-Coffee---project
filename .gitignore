@@ -1,5 +1,7 @@
+.env
 venv/
+.venv/
 __pycache__/
-*.db
-.DS_Store
-config.py
+*.py[cod]
+.idea/
+coffee.db
