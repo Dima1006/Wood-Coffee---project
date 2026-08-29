@@ -7,6 +7,7 @@ A Telegram bot for placing pre-orders at **Wood Coffee**. Customers can choose d
 - Choose coffee, tea, milk drinks, and desserts.
 - Select a drink size with automatic price calculation.
 - Add items to a cart and calculate the total.
+- Choose a Wood Coffee location by address before creating an order.
 - Complete a test checkout.
 - Choose online payment (test) or payment on arrival.
 - Choose an arrival time of 5, 10, or 15 minutes.
@@ -87,6 +88,16 @@ The products and prices are defined in `menu.py`. To add or update an item, edit
 ## Payment and no-show policy
 
 During checkout, customers can choose **Online Payment (test)** or **Pay on Arrival**. Only pay-on-arrival orders are eligible for no-show warnings.
+
+## Coffee shop locations
+
+After `/start`, customers select the location for their order:
+
+- Wood Coffee — улица Пушкина
+- Wood Coffee — улица Ткаченка
+- Wood Coffee — бульвар Вусикера
+
+The selected location is included in the order notification sent to staff.
 
 Staff receive an order notification in Telegram. For a pay-on-arrival order, staff can use the `✅ Arrived` or `🟨 No show` button. A no-show adds one warning to the customer. After two warnings, the customer cannot create new orders until a staff member unblocks them.
 

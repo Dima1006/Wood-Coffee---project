@@ -14,3 +14,9 @@ STAFF_IDS = [
     for staff_id in os.getenv("STAFF_IDS", "").split(",")
     if staff_id.strip()
 ]
+
+BRANCHES = (
+    "Wood Coffee — улица Пушкина",
+    "Wood Coffee — улица Ткаченка",
+    "Wood Coffee — бульвар Вусикера",
+)

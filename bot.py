@@ -4,11 +4,11 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.utils import executor
 
-from config import BOT_TOKEN, STAFF_IDS
+from config import BOT_TOKEN, BRANCHES, STAFF_IDS
 from menu import COFFEE, TEA, MILK_DRINK, DESSERTS
 from states import OrderState
 from keyboards import order_status_kb, yes_no_kb
-from cart import add_to_cart, clear_cart, get_cart, cart_total
+from cart import add_to_cart, clear_cart, get_cart, cart_total, remove_from_cart
 from db import PAYMENT_ON_ARRIVAL, PAYMENT_ONLINE, storage
 
 bot = Bot(token=BOT_TOKEN)
@@ -41,8 +41,30 @@ async def start(message: types.Message, state: FSMContext):
     if await reject_blocked_customer(message):
         return
     await message.answer(
-        "☕ Welcome to Wood Coffee!\nChoose a category 👇",
-        reply_markup=get_main_menu()
+        "☕ Welcome to Wood Coffee!\nChoose a coffee shop 👇",
+        reply_markup=get_branch_menu(),
+    )
+    await OrderState.choosing_branch.set()
+
+
+def get_branch_menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for branch in BRANCHES:
+        kb.add(branch)
+    return kb
+
+
+# ---------- Branch selection ----------
+@dp.message_handler(state=OrderState.choosing_branch)
+async def choose_branch(message: types.Message, state: FSMContext):
+    if message.text not in BRANCHES:
+        await message.answer("Choose a coffee shop using the buttons.")
+        return
+
+    await state.update_data(branch=message.text)
+    await message.answer(
+        f"📍 Selected: {message.text}\nChoose a category 👇",
+        reply_markup=get_main_menu(),
     )
     await OrderState.choosing_category.set()
 
@@ -165,14 +187,54 @@ async def show_cart(message: types.Message):
         return
 
     text = "🛒 Your cart:\n\n"
-    for i in cart:
-        text += f"• {i['name']} ({i['size']}) — {i['price']}₴\n"
+    for number, item in enumerate(cart, start=1):
+        text += f"{number}. {item['name']} ({item['size']}) — {item['price']}₴\n"
     text += f"\n💰 Total: {cart_total(message.from_user.id)}₴"
 
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("💳 Pay", "⬅️ Back")
+    kb.add("💳 Pay", "➖ Remove item")
+    kb.add("⬅️ Back")
 
     await message.answer(text, reply_markup=kb)
+
+
+
+
+
+# ---------- Cart item removal ----------
+@dp.message_handler(text="➖ Remove item", state="*")
+async def start_removing_item(message: types.Message, state: FSMContext):
+    if not get_cart(message.from_user.id):
+        await message.answer("Your cart is empty 🕸")
+        return
+
+    await message.answer("Enter the item number to remove:")
+    await OrderState.choosing_item_to_remove.set()
+
+
+@dp.message_handler(state=OrderState.choosing_item_to_remove)
+async def remove_item(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Back":
+        await OrderState.choosing_category.set()
+        await show_cart(message)
+        return
+
+    try:
+        item_number = int(message.text)
+    except (TypeError, ValueError):
+        await message.answer("Enter a number from the cart.")
+        return
+
+    removed_item = remove_from_cart(message.from_user.id, item_number - 1)
+    if removed_item is None:
+        await message.answer("There is no item with that number. Try again.")
+        return
+
+    await message.answer(
+        f"✅ Removed: {removed_item['name']} ({removed_item['size']})"
+    )
+    await OrderState.choosing_category.set()
+    await show_cart(message)
 
 
 # ---------- Payment ----------
@@ -233,8 +295,9 @@ async def time_handler(message: types.Message, state: FSMContext):
     cart = get_cart(message.from_user.id)
     data = await state.get_data()
     payment_method = data.get("payment_method")
+    branch = data.get("branch")
 
-    if not payment_method or not cart:
+    if not payment_method or not cart or branch not in BRANCHES:
         await state.finish()
         await message.answer("Your checkout session expired. Please create the order again.", reply_markup=get_main_menu())
         return
@@ -252,11 +315,13 @@ async def time_handler(message: types.Message, state: FSMContext):
         total=total,
         payment_method=payment_method,
         arrival_time=arrival,
+        branch=branch,
     )
     payment_label = "Online Payment (test)" if payment_method == PAYMENT_ONLINE else "Pay on Arrival"
     msg = (
         f"🔔 NEW ORDER #{order_id}\n"
         f"👤 Customer ID: {message.from_user.id}\n"
+        f"📍 Coffee shop: {branch}\n"
         f"💳 Payment: {payment_label}\n"
         f"⏰ Arrival: {arrival}\n\n{order}\n\n💰 Total: {total}₴"
     )
@@ -267,7 +332,10 @@ async def time_handler(message: types.Message, state: FSMContext):
 
     clear_cart(message.from_user.id)
     await state.finish()
-    await message.answer(f"✅ We will be waiting for you at {arrival}", reply_markup=get_main_menu())
+    await message.answer(
+        f"✅ We will be waiting for you at {arrival}\n📍 {branch}",
+        reply_markup=get_main_menu(),
+    )
 
 
 @dp.callback_query_handler(lambda call: call.data and call.data.startswith("order:"), state="*")

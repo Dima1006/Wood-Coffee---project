@@ -32,10 +32,18 @@ class OrderStorage:
             total INTEGER NOT NULL,
             payment_method TEXT NOT NULL,
             arrival_time TEXT NOT NULL,
+            branch TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         """)
+        order_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(orders)")
+        }
+        if "branch" not in order_columns:
+            self.connection.execute(
+                "ALTER TABLE orders ADD COLUMN branch TEXT NOT NULL DEFAULT ''"
+            )
         self.connection.commit()
 
     def create_order(
@@ -45,13 +53,14 @@ class OrderStorage:
         total: int,
         payment_method: str,
         arrival_time: str,
+        branch: str,
     ) -> int:
         cursor = self.connection.execute(
             """
-            INSERT INTO orders (user_id, items, total, payment_method, arrival_time)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO orders (user_id, items, total, payment_method, arrival_time, branch)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (user_id, json.dumps(items), total, payment_method, arrival_time),
+            (user_id, json.dumps(items), total, payment_method, arrival_time, branch),
         )
         self.connection.commit()
         return cursor.lastrowid
@@ -75,6 +84,12 @@ class OrderStorage:
             "SELECT user_id FROM orders WHERE id = ?", (order_id,)
         ).fetchone()
         return row["user_id"] if row else None
+
+    def get_order_branch(self, order_id: int) -> Optional[str]:
+        row = self.connection.execute(
+            "SELECT branch FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        return row["branch"] if row else None
 
     def mark_no_show(self, order_id: int) -> Optional[tuple[int, bool]]:
         with self.connection:

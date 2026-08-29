@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 
 from db import PAYMENT_ON_ARRIVAL, PAYMENT_ONLINE, OrderStorage
@@ -21,7 +22,52 @@ class OrderStorageTests(unittest.TestCase):
             total=85,
             payment_method=payment_method,
             arrival_time="12:30",
+            branch="Wood Coffee — улица Пушкина",
         )
+
+    def test_order_stores_selected_branch(self):
+        order_id = self.create_order()
+        self.assertEqual(
+            self.storage.get_order_branch(order_id), "Wood Coffee — улица Пушкина"
+        )
+
+    def test_existing_database_is_migrated_with_branch_column(self):
+        legacy_path = Path(self.temp_dir.name) / "legacy.db"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    items TEXT NOT NULL,
+                    total INTEGER NOT NULL,
+                    payment_method TEXT NOT NULL,
+                    arrival_time TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO orders (user_id, items, total, payment_method, arrival_time)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (42, "[]", 85, PAYMENT_ON_ARRIVAL, "12:30"),
+            )
+            legacy_order_id = cursor.lastrowid
+
+        legacy_storage = OrderStorage(legacy_path)
+        try:
+            columns = {
+                row["name"]
+                for row in legacy_storage.connection.execute("PRAGMA table_info(orders)")
+            }
+            self.assertIn("branch", columns)
+            self.assertEqual(legacy_storage.get_order_customer_id(legacy_order_id), 42)
+            self.assertEqual(legacy_storage.get_order_branch(legacy_order_id), "")
+        finally:
+            legacy_storage.close()
 
     def test_second_no_show_blocks_customer(self):
         self.assertEqual(self.storage.mark_no_show(self.create_order()), (1, False))
